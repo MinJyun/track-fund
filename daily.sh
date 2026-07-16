@@ -4,11 +4,11 @@ set -u
 cd "$(dirname "$0")"
 
 /usr/bin/python3 -W ignore main.py daily
-status=$?
+rc=$?
 
 git add -A data reports
 if ! git diff --cached --quiet; then
     git commit -q -m "daily snapshot $(date +%Y-%m-%d)"
 fi
 
-exit $status
+exit $rc
