@@ -20,7 +20,9 @@ python3 main.py report                # 只產報告
 # --etf 00981A 可限定單檔，可重複
 ```
 
-建議排程在交易日 18:00 後執行（統一 16:30 後才揭露當日資料）。
+排程：`~/Library/LaunchAgents/com.minjyun.track-fund.plist` 於週一至週五 18:00
+執行 `daily.sh`（抓取 + 產報告 + 自動 commit；統一 16:30 後才揭露當日資料）。
+手動觸發：`launchctl kickstart gui/$(id -u)/com.minjyun.track-fund`。
 
 ## 資料存放
 
