@@ -9,6 +9,7 @@ rc=$?
 git add -A data reports
 if ! git diff --cached --quiet; then
     git commit -q -m "daily snapshot $(date +%Y-%m-%d)"
+    git push -q || echo "push 失敗，快照僅存本機"
 fi
 
 exit $rc
