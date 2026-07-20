@@ -1,15 +1,12 @@
 """比對相鄰兩個資料日的持股，產出每日買賣報告（Markdown）。
 
-核心校正：申購/買回造成基金規模變動時，全部持股會等比放大縮小，
-不能直接把股數差當成經理人買賣。以流通單位數比值校正：
-
-    主動調整股數 = 今日股數 - 昨日股數 × (今日流通單位數 / 昨日流通單位數)
+這五檔主動式 ETF 皆為現金申購/買回：申贖進出的是現金，不會直接改變持股，
+所以「股數差」就是經理人的實際買賣，不需要按規模校正。
+（申購湧入後的布建買盤、買回後的變現賣壓，也是真實下單，會如實反映在股數差。）
+流通單位數變化列在報告開頭，供判讀「這些買賣是調整持股還是消化申贖」。
 """
 import sqlite3
 from pathlib import Path
-
-# 校正後變化量佔前日股數比例超過此值才列入加減碼（過濾規模校正的殘差雜訊）
-MIN_CHANGE_PCT = 1.0
 
 REPORT_DIR = Path(__file__).parent / "reports"
 
@@ -29,17 +26,9 @@ def _holdings(conn, etf, dd):
                    "weight": r[4]} for r in rows}
 
 
-def diff_etf(conn: sqlite3.Connection, etf: str):
-    """回傳 (markdown 文字, 比對用的兩個日期)；資料不足兩天回傳 None。"""
-    dates = [r[0] for r in conn.execute(
-        "SELECT data_date FROM fund_day WHERE etf=? "
-        "ORDER BY data_date DESC LIMIT 2", (etf,))]
-    if len(dates) < 2:
-        return None
-    curr_d, prev_d = dates
+def diff_etf(conn: sqlite3.Connection, etf: str, prev_d: str, curr_d: str):
     curr, prev = _holdings(conn, etf, curr_d), _holdings(conn, etf, prev_d)
     fc, fp = _fund_day(conn, etf, curr_d), _fund_day(conn, etf, prev_d)
-    ratio = fc["units"] / fp["units"] if fc["units"] and fp["units"] else 1.0
 
     def price(code):
         h = curr.get(code) or prev.get(code)
@@ -55,20 +44,22 @@ def diff_etf(conn: sqlite3.Connection, etf: str):
             gone.append((code, p["name"], p["shares"],
                          (price(code) or 0) * p["shares"]))
             continue
-        adj = c["shares"] - p["shares"] * ratio
-        if p["shares"] and abs(adj) / p["shares"] * 100 >= MIN_CHANGE_PCT:
-            est = (price(code) or 0) * adj
-            item = (code, c["name"], p["shares"], c["shares"], adj, est,
+        delta = c["shares"] - p["shares"]
+        if delta:
+            est = (price(code) or 0) * delta
+            item = (code, c["name"], p["shares"], c["shares"], delta, est,
                     c["weight"] - p["weight"])
-            (inc if adj > 0 else dec).append(item)
+            (inc if delta > 0 else dec).append(item)
     inc.sort(key=lambda x: -abs(x[5]))
     dec.sort(key=lambda x: -abs(x[5]))
     new.sort(key=lambda x: -(x[3] or 0))
     gone.sort(key=lambda x: -(x[3] or 0))
 
+    du = ((fc["units"] - fp["units"]) / fp["units"] * 100
+          if fc["units"] and fp["units"] else 0)
     L = [f"# {etf} 持股變化：{prev_d} → {curr_d}", ""]
     L.append(f"- 流通單位數：{fp['units']:,.0f} → {fc['units']:,.0f}"
-             f"（規模校正比 {ratio:.4f}）")
+             f"（{du:+.2f}%，現金申贖，不直接反映在持股）")
     L.append(f"- 淨值：{fp['nav']} → {fc['nav']}")
     L.append(f"- 持股檔數：{len(prev)} → {len(curr)}")
     L.append("")
@@ -86,29 +77,34 @@ def diff_etf(conn: sqlite3.Connection, etf: str):
               for c, n, s, a in gone] + [""]
     for title, items in (("加碼", inc), ("減碼", dec)):
         if items:
-            L += [f"## {title}（規模校正後 ≥ {MIN_CHANGE_PCT}%）", "",
-                  "| 股票 | 前日股數 | 今日股數 | 校正後變化 | 估計金額 | 權重變化 |",
+            L += [f"## {title}", "",
+                  "| 股票 | 前日股數 | 今日股數 | 變化 | 估計金額 | 權重變化 |",
                   "|---|---:|---:|---:|---:|---:|"]
-            L += [f"| {c} {n} | {ps:,.0f} | {cs:,.0f} | {adj:+,.0f} "
+            L += [f"| {c} {n} | {ps:,.0f} | {cs:,.0f} | {d:+,.0f} "
                   f"| {money(est) if est else '—'} | {dw:+.2f}% |"
-                  for c, n, ps, cs, adj, est, dw in items] + [""]
+                  for c, n, ps, cs, d, est, dw in items] + [""]
     if not (new or gone or inc or dec):
-        L += ["（無顯著變化）", ""]
-    return "\n".join(L), (prev_d, curr_d)
+        L += ["（持股無任何變化）", ""]
+    return "\n".join(L)
 
 
 def write_reports(conn: sqlite3.Connection, etfs) -> list:
+    """為每檔 ETF 的所有相鄰資料日產出報告（既有檔案冪等重算覆蓋）。"""
     written = []
     for etf in etfs:
-        result = diff_etf(conn, etf)
-        if result is None:
+        dates = [r[0] for r in conn.execute(
+            "SELECT data_date FROM fund_day WHERE etf=? ORDER BY data_date",
+            (etf,))]
+        if len(dates) < 2:
             print(f"[report] {etf}: 資料不足兩天，略過")
             continue
-        text, (prev_d, curr_d) = result
-        out = REPORT_DIR / curr_d
-        out.mkdir(parents=True, exist_ok=True)
-        path = out / f"{etf}.md"
-        path.write_text(text, encoding="utf-8")
-        written.append(path)
-        print(f"[report] {etf}: {prev_d} → {curr_d} 寫入 {path}")
+        for prev_d, curr_d in zip(dates, dates[1:]):
+            text = diff_etf(conn, etf, prev_d, curr_d)
+            out = REPORT_DIR / curr_d
+            out.mkdir(parents=True, exist_ok=True)
+            path = out / f"{etf}.md"
+            path.write_text(text, encoding="utf-8")
+            written.append(path)
+        print(f"[report] {etf}: {dates[0]} ～ {dates[-1]} "
+              f"共 {len(dates) - 1} 份報告")
     return written
