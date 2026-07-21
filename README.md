@@ -30,6 +30,18 @@ python3 main.py report                # 只產報告
 - `data/holdings.db` — SQLite：`fund_day`（淨值/流通單位數）、`holding`（個股股數/金額/權重）
 - `reports/{資料日}/{ETF}.md` — 買賣報告：新進場、清倉、加碼、減碼
 
+## LINE 推播
+
+`daily.sh` 跑完會執行 `notify.py`，把各檔最新異動摘要推到 LINE 群組
+（Messaging API push）。設定檔 `line_config.json`（gitignored）：
+
+```json
+{"channel_access_token": "<長期權杖>", "to": "<群組ID C開頭>"}
+```
+
+未建設定檔則跳過。同一組資料日只發一次（狀態在 `data/notify_state.json`），
+測試用 `python3 notify.py --dry-run` 可只印不發。
+
 ## 判讀注意
 
 - 各家揭露延遲不同（統一當日、復華 T、元大約 T-2），diff 以「資料日」對齊，不是抓取日。
