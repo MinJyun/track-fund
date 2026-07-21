@@ -1,7 +1,11 @@
 """把最新持股異動摘要推到 LINE 群組（Messaging API push）。
 
-設定檔 line_config.json（已 gitignore，勿入版控）：
-    {"channel_access_token": "<長期權杖>", "to": "<群組ID C開頭 或 使用者ID U開頭>"}
+設定檔 line_config.json（已 gitignore，勿入版控），兩種擇一：
+    {"channel_id": "<Channel ID>", "channel_secret": "<Channel secret>",
+     "to": "<群組ID C開頭 或 使用者ID U開頭>"}
+    {"channel_access_token": "<長期權杖>", "to": "<同上>"}
+前者每次推播時自動換發 stateless token（Basic settings 分頁就有這兩個值，
+不必在後台找發行長期權杖的按鈕）。
 
 未建設定檔時靜默跳過（排程照跑不報錯）。
 同一組資料日只會發一次（狀態記在 data/notify_state.json），
@@ -91,6 +95,21 @@ def build_message(conn):
     return text, sig
 
 
+def _token(cfg):
+    if cfg.get("channel_access_token"):
+        return cfg["channel_access_token"]
+    r = requests.post(
+        "https://api.line.me/oauth2/v3/token",
+        data={"grant_type": "client_credentials",
+              "client_id": cfg["channel_id"],
+              "client_secret": cfg["channel_secret"]},
+        timeout=30,
+    )
+    if r.status_code != 200:
+        raise RuntimeError(f"LINE 換發 token 失敗 {r.status_code}: {r.text}")
+    return r.json()["access_token"]
+
+
 def push(token, to, text):
     r = requests.post(
         "https://api.line.me/v2/bot/message/push",
@@ -118,7 +137,7 @@ def main():
     if "--dry-run" in sys.argv:
         print(text)
         return
-    push(cfg["channel_access_token"], cfg["to"], text)
+    push(_token(cfg), cfg["to"], text)
     STATE.write_text(json.dumps(sig, indent=1))
     print(f"[notify] 已推播（{len(text)} 字）")
 

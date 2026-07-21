@@ -33,7 +33,14 @@ python3 main.py report                # 只產報告
 ## LINE 推播
 
 `daily.sh` 跑完會執行 `notify.py`，把各檔最新異動摘要推到 LINE 群組
-（Messaging API push）。設定檔 `line_config.json`（gitignored）：
+（Messaging API push）。設定檔 `line_config.json`（gitignored），兩種擇一：
+
+```json
+{"channel_id": "<Channel ID>", "channel_secret": "<Channel secret>", "to": "<群組ID C開頭>"}
+```
+
+Channel ID / secret 在 LINE Developers Console 的 **Basic settings** 分頁，
+程式每次推播自動換發短效 token，不必另外發行長期權杖。若你已有長期權杖：
 
 ```json
 {"channel_access_token": "<長期權杖>", "to": "<群組ID C開頭>"}
