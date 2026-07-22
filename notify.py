@@ -50,7 +50,7 @@ def _fund_summary(conn, etf):
         h = curr.get(code) or prev.get(code)
         return h["amount"] / h["shares"] if h["amount"] and h["shares"] else 0
 
-    new, gone, chg = [], [], []
+    new, gone, inc, dec = [], [], [], []
     for code in set(curr) | set(prev):
         c, p = curr.get(code), prev.get(code)
         if p is None:
@@ -63,22 +63,26 @@ def _fund_summary(conn, etf):
         elif c["shares"] != p["shares"]:
             d = c["shares"] - p["shares"]
             est = price(code) * d
-            chg.append((abs(est), f"{'➕' if d > 0 else '➖'} {c['name']} "
-                        f"{d:+,.0f}股({_money(est)})"))
+            entry = (abs(est), f"{c['name']} {d:+,.0f}股({_money(est)})")
+            (inc if d > 0 else dec).append(entry)
 
     du = ((fc["units"] - fp["units"]) / fp["units"] * 100
           if fc["units"] and fp["units"] else 0)
     head = (f"▍{etf} {FUNDS[etf]['name']}（{prev_d[5:]}→{curr_d[5:]}，"
             f"申贖{du:+.1f}%）")
-    if not (new or gone or chg):
+    if not (new or gone or inc or dec):
         return [head, "持股無變動"], curr_d
     lines = [head]
     lines += [t for _, t in sorted(new, key=lambda x: -x[0])]
     lines += [t for _, t in sorted(gone, key=lambda x: -x[0])]
-    chg.sort(key=lambda x: -x[0])
-    lines += [t for _, t in chg[:TOP_N]]
-    if len(chg) > TOP_N:
-        lines.append(f"…另有 {len(chg) - TOP_N} 筆較小異動")
+    for label, items in (("➕ 加碼", inc), ("➖ 減碼", dec)):
+        if not items:
+            continue
+        items.sort(key=lambda x: -x[0])
+        lines.append(label)
+        lines += [f"　{t}" for _, t in items[:TOP_N]]
+        if len(items) > TOP_N:
+            lines.append(f"　…另 {len(items) - TOP_N} 筆")
     return lines, curr_d
 
 
@@ -130,12 +134,12 @@ def main():
     conn = store.connect()
     text, sig = build_message(conn)
 
+    if "--dry-run" in sys.argv:
+        print(text)
+        return
     old = json.loads(STATE.read_text()) if STATE.exists() else {}
     if sig == old:
         print("[notify] 資料日未更新，跳過推播")
-        return
-    if "--dry-run" in sys.argv:
-        print(text)
         return
     push(_token(cfg), cfg["to"], text)
     STATE.write_text(json.dumps(sig, indent=1))
